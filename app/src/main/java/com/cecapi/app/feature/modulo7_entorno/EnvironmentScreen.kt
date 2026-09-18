@@ -65,7 +65,7 @@ fun EnvironmentScreen(
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-                PackageManager.PERMISSION_GRANTED,
+                    PackageManager.PERMISSION_GRANTED,
         )
     }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -103,8 +103,8 @@ fun EnvironmentScreen(
                         val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                         cameraProviderFuture.addListener({
                             val cameraProvider = cameraProviderFuture.get()
-                            val preview = Preview.Builder().build().also {
-                                it.surfaceProvider = previewView.surfaceProvider
+                            val preview = Preview.Builder().build().also { p ->
+                                p.setSurfaceProvider(previewView.surfaceProvider)
                             }
                             val capture = ImageCapture.Builder().build()
                             imageCapture = capture

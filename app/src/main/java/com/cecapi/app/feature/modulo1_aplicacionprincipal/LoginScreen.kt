@@ -52,6 +52,8 @@ import com.cecapi.app.core.theme.CecapiError
 import com.cecapi.app.core.theme.CecapiEyebrowStyle
 import com.cecapi.app.core.theme.CecapiSurface
 import com.cecapi.app.core.theme.CecapiTextMuted
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.unit.dp
 
 @Composable
 fun LoginScreen(

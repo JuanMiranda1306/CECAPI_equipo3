@@ -49,6 +49,8 @@ import com.cecapi.app.core.theme.CecapiTextMuted
 import com.cecapi.app.core.ui.VoiceCaptionBubble
 import com.cecapi.app.core.ui.VoiceMicButton
 import com.cecapi.app.core.voice.VoiceState
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.unit.dp
 
 @Composable
 fun RegisterScreen(
