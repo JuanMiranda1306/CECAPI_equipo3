@@ -115,12 +115,13 @@ fun DocumentReaderScreen(
     LaunchedEffect(Unit) { viewModel.routes.collect(onOpen) }
 
     val hayDocumento = uiState.parrafos.isNotEmpty()
+    val onVolverClick: () -> Unit = { if (viewModel.onBotonVolverPresionado()) onBack() }
 
     if (hayDocumento && !uiState.isProcessing) {
         // Pantalla 2: Interfaz futurista CECAPI de control de lectura con botón VOLVER AL MENÚ arriba de todo
         DocumentReadoutControlScreen(
             uiState = uiState,
-            onBack = onBack,
+            onBack = onVolverClick,
             onPause = viewModel::pausarLectura,
             onResume = viewModel::continuarLectura,
             onRepeat = viewModel::repetirLectura,
@@ -134,7 +135,7 @@ fun DocumentReaderScreen(
             uiState = uiState,
             hasCameraPermission = hasCameraPermission,
             onReadyCamera = { imageCapture = it },
-            onBack = onBack,
+            onBack = onVolverClick,
             onCaptureClick = { if (viewModel.onBotonCapturaPresionado()) takePhoto() },
             onFramingHint = viewModel::onFramingHint,
         )

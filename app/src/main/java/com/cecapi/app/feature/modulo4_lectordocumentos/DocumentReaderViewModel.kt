@@ -37,6 +37,7 @@ data class DocumentReaderUiState(
     val estaLeyendo: Boolean = false,
     val estaPausado: Boolean = false,
     val capturaArmada: Boolean = false,
+    val volverArmado: Boolean = false,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -134,6 +135,18 @@ class DocumentReaderViewModel @Inject constructor(
         if (!sesionIniciada()) return false
         _uiState.value = _uiState.value.copy(capturaArmada = true)
         voiceEngine.speak("Vas a tomar una foto del documento. Toca otra vez para capturarla.")
+        return false
+    }
+
+    /** El primer toque explica qué hace el botón; el segundo vuelve al menú principal. */
+    fun onBotonVolverPresionado(): Boolean {
+        if (_uiState.value.volverArmado) {
+            _uiState.value = _uiState.value.copy(volverArmado = false)
+            detenerLectura()
+            return true
+        }
+        _uiState.value = _uiState.value.copy(volverArmado = true)
+        voiceEngine.speak("Botón volver al menú principal. Sales del lector y regresas al menú. Toca otra vez para volver.")
         return false
     }
 
