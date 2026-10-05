@@ -88,13 +88,20 @@ class DocumentReaderViewModel @Inject constructor(
     private var pistaDicha: FramingHint? = null
     private var momentoPistaDicha = 0L
 
+    // Captura automática: se toma la foto sola cuando el encuadre queda bien unos segundos seguidos.
+    private var capturaPendiente = false
+    private var fallosAutomaticos = 0
+    private val capturaAutomaticaActiva: Boolean get() = fallosAutomaticos < MAX_FALLOS_AUTOMATICOS
+    private var ultimaCapturaFueAutomatica = false
+
     init {
         observarFinDeParrafo()
         viewModelScope.launch {
             voiceEngine.recognizedSpeech.collect { speech -> onSpeech(speech.text) }
         }
         voiceEngine.speak(
-            "Lector de texto. Apunta la cámara a un documento y toca el botón azul o di toma la foto. " + CommandCatalog.hint("cámara"),
+            "Lector de texto. Apunta la cámara a un documento y no te muevas: tomaré la foto sola cuando el texto se vea bien. " +
+                "También puedes tocar el botón azul o decir toma la foto. " + CommandCatalog.hint("cámara"),
             listenAfter = true,
         )
     }
@@ -183,9 +190,13 @@ class DocumentReaderViewModel @Inject constructor(
         }
     }
 
-    fun pedirCaptura() {
-        if (_uiState.value.isProcessing || !sesionIniciada()) return
+    fun pedirCaptura() = capturar(automatica = false)
+
+    private fun capturar(automatica: Boolean) {
+        if (capturaPendiente || _uiState.value.isProcessing || !sesionIniciada()) return
         detenerLectura()
+        capturaPendiente = true
+        ultimaCapturaFueAutomatica = automatica
         _captureRequests.tryEmit(Unit)
     }
 
@@ -195,10 +206,20 @@ class DocumentReaderViewModel @Inject constructor(
      */
     fun onFramingHint(pista: FramingHint) {
         val state = _uiState.value
-        if (state.isProcessing || state.parrafos.isNotEmpty()) return
+        if (capturaPendiente || state.isProcessing || state.parrafos.isNotEmpty()) return
 
         pistaRepetida = if (pista == ultimaPista) pistaRepetida + 1 else 1
         ultimaPista = pista
+
+        // Con el texto bien encuadrado y el teléfono quieto, toma la foto sin esperar a que se hable la indicación.
+        if (pista == FramingHint.LISTO && capturaAutomaticaActiva && pistaRepetida >= CUADROS_AUTOCAPTURA &&
+            sessionRepository.currentUser.value != null && voiceEngine.state.value !is VoiceState.Speaking
+        ) {
+            cues.play(FeedbackCues.Cue.TAP)
+            capturar(automatica = true)
+            return
+        }
+
         val necesarias = if (pista == FramingHint.SIN_TEXTO) CUADROS_SIN_TEXTO else CUADROS_PISTA
         if (pistaRepetida < necesarias) return
         if (voiceEngine.state.value != VoiceState.Idle) return
@@ -214,7 +235,13 @@ class DocumentReaderViewModel @Inject constructor(
 
         pistaDicha = pista
         momentoPistaDicha = ahora
-        voiceEngine.speak(pista.mensaje)
+        voiceEngine.speak(mensajeDe(pista))
+    }
+
+    private fun mensajeDe(pista: FramingHint): String = when {
+        pista != FramingHint.LISTO -> pista.mensaje
+        capturaAutomaticaActiva -> pista.mensaje + " No te muevas, voy a tomar la foto."
+        else -> pista.mensaje + " Toca el botón o di toma la foto."
     }
 
     private fun reiniciarGuia() {
@@ -229,6 +256,7 @@ class DocumentReaderViewModel @Inject constructor(
     }
 
     fun onCaptureFailed() {
+        capturaPendiente = false
         val message = "No pude tomar la foto. Revisa que la cámara esté libre e intenta de nuevo."
         _uiState.value = DocumentReaderUiState(errorMessage = message)
         cues.play(FeedbackCues.Cue.ERROR)
@@ -237,9 +265,11 @@ class DocumentReaderViewModel @Inject constructor(
 
     fun onPhotoCaptured(imageUri: Uri, rutaImagen: String) {
         val usuario = sessionRepository.currentUser.value ?: run {
+            capturaPendiente = false
             voiceEngine.speak(VoiceMessages.NEEDS_LOGIN)
             return
         }
+        capturaPendiente = false
         _uiState.value = _uiState.value.copy(
             isProcessing = true,
             errorMessage = null,
@@ -251,6 +281,7 @@ class DocumentReaderViewModel @Inject constructor(
         viewModelScope.launch {
             when (val outcome = repository.processCapturedPhoto(usuario.id, imageUri, rutaImagen)) {
                 is OcrOutcome.Exito -> {
+                    fallosAutomaticos = 0
                     _uiState.value = DocumentReaderUiState(
                         isProcessing = false,
                         documentoId = outcome.documentoId,
@@ -278,7 +309,14 @@ class DocumentReaderViewModel @Inject constructor(
         reiniciarGuia()
         _uiState.value = DocumentReaderUiState(errorMessage = message)
         cues.play(FeedbackCues.Cue.ERROR)
-        voiceEngine.speak("$message Di toma la foto para intentarlo otra vez.", listenAfter = true)
+        // Si la foto automática falla seguido (poca luz, papel sin texto), se apaga para no repetir fotos en bucle.
+        if (ultimaCapturaFueAutomatica) fallosAutomaticos++
+        val siguientePaso = when {
+            !ultimaCapturaFueAutomatica -> "Di toma la foto para intentarlo otra vez."
+            capturaAutomaticaActiva -> "Vuelve a apuntar al papel y tomaré otra foto sola."
+            else -> "Ya no tomaré fotos solas. Toca el botón o di toma la foto cuando estés listo."
+        }
+        voiceEngine.speak("$message $siguientePaso", listenAfter = true)
     }
 
     fun onRepeatFromStartRequested() = repetirLectura()
@@ -375,11 +413,12 @@ class DocumentReaderViewModel @Inject constructor(
     private fun nuevaFoto(tomarYa: Boolean) {
         detenerLectura()
         reiniciarGuia()
+        fallosAutomaticos = 0
         _uiState.value = DocumentReaderUiState()
         if (tomarYa) {
             pedirCaptura()
         } else {
-            voiceEngine.speak("Cámara lista. Apunta al nuevo papel y di toma la foto.", listenAfter = true)
+            voiceEngine.speak("Cámara lista. Apunta al nuevo papel y quédate quieto, tomaré la foto sola.", listenAfter = true)
         }
     }
 
@@ -437,6 +476,12 @@ class DocumentReaderViewModel @Inject constructor(
         /** Cuadros seguidos (uno cada ~0.7 s) con la misma indicación antes de decirla. */
         const val CUADROS_PISTA = 2
         const val CUADROS_SIN_TEXTO = 4
+
+        /** Cuadros seguidos con el encuadre correcto (~2 s quieto) antes de tomar la foto sola. */
+        const val CUADROS_AUTOCAPTURA = 3
+
+        /** Fotos automáticas fallidas seguidas antes de dejar solo el botón y la voz. */
+        const val MAX_FALLOS_AUTOMATICOS = 2
 
         const val ESPERA_CAMBIO_MS = 2_500L
         const val ESPERA_REPETIR_MS = 5_000L
