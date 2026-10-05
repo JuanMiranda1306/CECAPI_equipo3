@@ -37,8 +37,20 @@ data class DocumentReaderUiState(
     val estaLeyendo: Boolean = false,
     val estaPausado: Boolean = false,
     val capturaArmada: Boolean = false,
-    val volverArmado: Boolean = false,
+    /** Botón que ya se tocó una vez y explicó lo que hace; el siguiente toque sobre él lo ejecuta. */
+    val botonArmado: BotonLector? = null,
 )
+
+/** Botones del lector que piden dos toques: el primero dice qué hacen y el segundo ejecutan la acción. */
+enum class BotonLector(val ayuda: String) {
+    PAUSAR("Botón pausar lectura. Detiene la lectura en este párrafo. Toca otra vez para pausar."),
+    REANUDAR("Botón reanudar lectura. Sigue leyendo desde donde te quedaste. Toca otra vez para continuar."),
+    REPETIR("Botón repetir lectura. Lee el documento desde el inicio. Toca otra vez para repetir."),
+    ANTERIOR("Botón párrafo anterior. Regresa al párrafo anterior. Toca otra vez para ir atrás."),
+    SIGUIENTE("Botón párrafo siguiente. Avanza al siguiente párrafo. Toca otra vez para avanzar."),
+    OTRA_FOTO("Botón tomar otra foto. Regresa a la cámara para leer un documento nuevo. Toca otra vez para abrir la cámara."),
+    VOLVER("Botón volver al menú principal. Sales del lector y regresas al menú. Toca otra vez para volver."),
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
@@ -91,6 +103,8 @@ class DocumentReaderViewModel @Inject constructor(
         val text = VoiceText.normalize(spoken)
         fun has(vararg words: String) = words.any { it in text }
         val hayDocumento = _uiState.value.parrafos.isNotEmpty()
+        // Un comando de voz cancela el botón que quedó a la espera del segundo toque.
+        _uiState.value = _uiState.value.copy(botonArmado = null)
         when {
             CommandCatalog.isRequest(spoken) -> voiceEngine.speak(CommandCatalog.READER, listenAfter = true)
             has("parrafo anterior", "anterior") -> anteriorParrafo()
@@ -133,21 +147,40 @@ class DocumentReaderViewModel @Inject constructor(
             return true
         }
         if (!sesionIniciada()) return false
-        _uiState.value = _uiState.value.copy(capturaArmada = true)
+        _uiState.value = _uiState.value.copy(capturaArmada = true, botonArmado = null)
         voiceEngine.speak("Vas a tomar una foto del documento. Toca otra vez para capturarla.")
         return false
     }
 
-    /** El primer toque explica qué hace el botón; el segundo vuelve al menú principal. */
-    fun onBotonVolverPresionado(): Boolean {
-        if (_uiState.value.volverArmado) {
-            _uiState.value = _uiState.value.copy(volverArmado = false)
-            detenerLectura()
-            return true
+    /**
+     * El primer toque explica qué hace el botón; el segundo ejecuta la acción.
+     * Explicarlo interrumpe la lectura, así que se deja en pausa para poder seguir después.
+     */
+    fun onBotonPresionado(boton: BotonLector) {
+        val state = _uiState.value
+        if (state.botonArmado != boton) {
+            if (state.estaLeyendo) {
+                detenerLectura()
+                _uiState.value = _uiState.value.copy(estaPausado = true)
+            }
+            _uiState.value = _uiState.value.copy(botonArmado = boton, capturaArmada = false)
+            voiceEngine.speak(boton.ayuda)
+            return
         }
-        _uiState.value = _uiState.value.copy(volverArmado = true)
-        voiceEngine.speak("Botón volver al menú principal. Sales del lector y regresas al menú. Toca otra vez para volver.")
-        return false
+        _uiState.value = state.copy(botonArmado = null)
+        when (boton) {
+            // La explicación ya detuvo la lectura; solo se confirma la pausa.
+            BotonLector.PAUSAR -> voiceEngine.speak("En pausa. Di continúa para seguir.", listenAfter = true)
+            BotonLector.REANUDAR -> continuarLectura()
+            BotonLector.REPETIR -> repetirLectura()
+            BotonLector.ANTERIOR -> anteriorParrafo()
+            BotonLector.SIGUIENTE -> siguienteParrafo()
+            BotonLector.OTRA_FOTO -> nuevaFoto(tomarYa = false)
+            BotonLector.VOLVER -> {
+                detenerLectura()
+                _back.tryEmit(Unit)
+            }
+        }
     }
 
     fun pedirCaptura() {

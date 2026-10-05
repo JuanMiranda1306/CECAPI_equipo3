@@ -115,19 +115,20 @@ fun DocumentReaderScreen(
     LaunchedEffect(Unit) { viewModel.routes.collect(onOpen) }
 
     val hayDocumento = uiState.parrafos.isNotEmpty()
-    val onVolverClick: () -> Unit = { if (viewModel.onBotonVolverPresionado()) onBack() }
+    // Todos los botones piden dos toques: el primero dice qué hacen, el segundo ejecutan la acción.
+    val onVolverClick: () -> Unit = { viewModel.onBotonPresionado(BotonLector.VOLVER) }
 
     if (hayDocumento && !uiState.isProcessing) {
         // Pantalla 2: Interfaz futurista CECAPI de control de lectura con botón VOLVER AL MENÚ hasta abajo
         DocumentReadoutControlScreen(
             uiState = uiState,
             onBack = onVolverClick,
-            onPause = viewModel::pausarLectura,
-            onResume = viewModel::continuarLectura,
-            onRepeat = viewModel::repetirLectura,
-            onPrevious = viewModel::anteriorParrafo,
-            onNext = viewModel::siguienteParrafo,
-            onRetakePhoto = viewModel::onResetToCameraRequested,
+            onPause = { viewModel.onBotonPresionado(BotonLector.PAUSAR) },
+            onResume = { viewModel.onBotonPresionado(BotonLector.REANUDAR) },
+            onRepeat = { viewModel.onBotonPresionado(BotonLector.REPETIR) },
+            onPrevious = { viewModel.onBotonPresionado(BotonLector.ANTERIOR) },
+            onNext = { viewModel.onBotonPresionado(BotonLector.SIGUIENTE) },
+            onRetakePhoto = { viewModel.onBotonPresionado(BotonLector.OTRA_FOTO) },
         )
     } else {
         // Pantalla 1: Vista previa de cámara limpia a pantalla completa
@@ -218,7 +219,9 @@ private fun DocumentReadoutControlScreen(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Tarjeta 1 Futurista: PAUSAR / REANUDAR
+        // Tarjeta 1 Futurista: PAUSAR / REANUDAR. Explicar "pausar" ya detiene la lectura, pero el botón
+        // sigue mostrando PAUSAR hasta el segundo toque para que no cambie bajo el dedo.
+        val mostrarPausar = uiState.estaLeyendo || uiState.botonArmado == BotonLector.PAUSAR
         val pauseTint = CecapiAccent
         Box(
             modifier = Modifier
@@ -229,9 +232,9 @@ private fun DocumentReadoutControlScreen(
                 .border(2.dp, pauseTint, RoundedCornerShape(24.dp))
                 .semantics {
                     role = Role.Button
-                    contentDescription = if (uiState.estaLeyendo) "Pausar lectura" else "Reanudar lectura"
+                    contentDescription = if (mostrarPausar) "Pausar lectura" else "Reanudar lectura"
                 }
-                .clickable { if (uiState.estaLeyendo) onPause() else onResume() },
+                .clickable { if (mostrarPausar) onPause() else onResume() },
             contentAlignment = Alignment.Center,
         ) {
             Row(
@@ -248,7 +251,7 @@ private fun DocumentReadoutControlScreen(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        imageVector = if (uiState.estaLeyendo) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        imageVector = if (mostrarPausar) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = null,
                         tint = pauseTint,
                         modifier = Modifier.size(34.dp),
@@ -256,7 +259,7 @@ private fun DocumentReadoutControlScreen(
                 }
                 Spacer(modifier = Modifier.size(16.dp))
                 Text(
-                    text = if (uiState.estaLeyendo) "PAUSAR LECTURA" else "REANUDAR LECTURA",
+                    text = if (mostrarPausar) "PAUSAR LECTURA" else "REANUDAR LECTURA",
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = CecapiTextPrimary,
