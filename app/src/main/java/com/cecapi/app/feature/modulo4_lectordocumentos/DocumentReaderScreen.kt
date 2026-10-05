@@ -118,7 +118,7 @@ fun DocumentReaderScreen(
     val onVolverClick: () -> Unit = { if (viewModel.onBotonVolverPresionado()) onBack() }
 
     if (hayDocumento && !uiState.isProcessing) {
-        // Pantalla 2: Interfaz futurista CECAPI de control de lectura con botón VOLVER AL MENÚ arriba de todo
+        // Pantalla 2: Interfaz futurista CECAPI de control de lectura con botón VOLVER AL MENÚ hasta abajo
         DocumentReadoutControlScreen(
             uiState = uiState,
             onBack = onVolverClick,
@@ -198,7 +198,7 @@ private fun DocumentCameraScreen(
 
 /**
  * Pantalla 2: Interfaz futurista CECAPI de lectura. El botón VOLVER AL MENÚ PRINCIPAL está directamente
- * sobre el botón de PAUSAR LECTURA en un tamaño GIGANTE.
+ * debajo del botón de TOMAR OTRA FOTO en un tamaño GIGANTE.
  */
 @Composable
 private fun DocumentReadoutControlScreen(
@@ -218,8 +218,6 @@ private fun DocumentReadoutControlScreen(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        VolverAlMenuButton(onClick = onBack)
-
         // Tarjeta 1 Futurista: PAUSAR / REANUDAR
         val pauseTint = CecapiAccent
         Box(
@@ -436,6 +434,8 @@ private fun DocumentReadoutControlScreen(
                 )
             }
         }
+
+        VolverAlMenuButton(onClick = onBack)
     }
 }
 
