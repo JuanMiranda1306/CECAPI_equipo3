@@ -27,28 +27,31 @@ class DocumentReaderRepository @Inject constructor(
     fun observeRecent(usuarioId: Long): Flow<List<DocumentoEscaneadoEntity>> = documentoDao.observeRecent(usuarioId)
 
     /**
-     * Runs on-device OCR on the captured photo and persists the document + extracted text.
-     * Rejects the photo before running ML Kit if it looks too dark or too blurry to read.
+     * Runs on-device OCR on the captured photo. The camera is free for anyone: with no [usuarioId] (nobody
+     * signed in) the text is still read out loud, it just is not saved to a history that would have nowhere
+     * to belong. Rejects the photo before running ML Kit if it looks too dark or too blurry to read.
      *
      * Aplica estructuración inteligente para Menús, Listas y Recibos:
      * 1. Extrae líneas individuales y las agrupa por renglones horizontales (mismo nivel Y).
      * 2. Asocia productos con sus respectivos precios en la misma línea ("Hamburguesa — $85.00").
      * 3. Formatea la lectura para voz natural (desglosa "Expreso / Americano $35 / $45" en líneas claras).
      */
-    suspend fun processCapturedPhoto(usuarioId: Long, imageUri: Uri, rutaImagen: String): OcrOutcome {
+    suspend fun processCapturedPhoto(usuarioId: Long?, imageUri: Uri, rutaImagen: String): OcrOutcome {
+        // A rejected or failed photo is never written to the database, so nothing would ever delete it from
+        // disk on its own. Clean it up right here instead.
         return try {
             val bitmap = decodeDownsampledBitmap(imageUri)
-                ?: return OcrOutcome.Error(IllegalStateException("No se pudo abrir la imagen: $imageUri"))
+                ?: return reject(rutaImagen, OcrOutcome.Error(IllegalStateException("No se pudo abrir la imagen: $imageUri")))
 
             val grises = toGrayscaleMatrix(bitmap)
             bitmap.recycle()
 
             if (averageLuminance(grises) < BRIGHTNESS_THRESHOLD) {
-                return OcrOutcome.PocaLuz
+                return reject(rutaImagen, OcrOutcome.PocaLuz)
             }
-            if (laplacianVariance(grises) < BLUR_VARIANCE_THRESHOLD) {
-                return OcrOutcome.Borrosa
-            }
+            // Borrosa ya no rechaza la foto: quien no ve no puede saber de antemano si quedó movida,
+            // así que se intenta leer igual y solo se avisa si algo sí se reconoció.
+            val borrosa = laplacianVariance(grises) < BLUR_VARIANCE_THRESHOLD
 
             val inputImage = InputImage.fromFilePath(context, imageUri)
             val visionText = recognizer.process(inputImage).await()
@@ -57,7 +60,7 @@ class DocumentReaderRepository @Inject constructor(
             val todasLasLineas = visionText.textBlocks.flatMap { it.lines }
 
             if (todasLasLineas.isEmpty()) {
-                return OcrOutcome.SinTexto
+                return reject(rutaImagen, OcrOutcome.SinTexto)
             }
 
             // Agrupamos las líneas por filas horizontales (mismo renglón Y)
@@ -103,22 +106,29 @@ class DocumentReaderRepository @Inject constructor(
             }
 
             if (parrafos.isEmpty()) {
-                return OcrOutcome.SinTexto
+                return reject(rutaImagen, OcrOutcome.SinTexto)
             }
 
-            val documentoId = documentoDao.insert(
-                DocumentoEscaneadoEntity(usuarioId = usuarioId, rutaImagen = rutaImagen),
-            )
-            textoDao.insert(
-                TextoExtraidoEntity(documentoId = documentoId, textoCompleto = parrafos.joinToString("\n\n")),
-            )
-            OcrOutcome.Exito(documentoId, parrafos)
+            val documentoId = usuarioId?.let { id ->
+                val nuevoId = documentoDao.insert(DocumentoEscaneadoEntity(usuarioId = id, rutaImagen = rutaImagen))
+                textoDao.insert(
+                    TextoExtraidoEntity(documentoId = nuevoId, textoCompleto = parrafos.joinToString("\n\n")),
+                )
+                nuevoId
+            }
+            OcrOutcome.Exito(documentoId, parrafos, borrosa = borrosa)
         } catch (e: Exception) {
-            OcrOutcome.Error(e)
+            reject(rutaImagen, OcrOutcome.Error(e))
         }
     }
 
-    suspend fun logLectura(documentoId: Long) {
+    private fun reject(rutaImagen: String, outcome: OcrOutcome): OcrOutcome {
+        runCatching { java.io.File(rutaImagen).delete() }
+        return outcome
+    }
+
+    suspend fun logLectura(documentoId: Long?) {
+        if (documentoId == null) return // nothing was saved for an anonymous reading, so there is nothing to log
         historialDao.insert(HistorialLecturaEntity(documentoId = documentoId))
     }
 

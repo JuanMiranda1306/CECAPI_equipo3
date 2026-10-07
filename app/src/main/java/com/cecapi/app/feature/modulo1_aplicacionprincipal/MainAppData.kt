@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.Flow
 enum class RolUsuario(val codigo: String) {
     ADMINISTRADOR("administrador"),
     DIRECTIVO("directivo"),
+    EDUCADOR("educador"),
     ALUMNO("alumno"),
     USUARIO("usuario"),
     ;
@@ -46,6 +47,27 @@ data class UsuarioEntity(
     /** Institution or place the person comes from (e.g. "CECAPI"); empty when they signed up on their own. */
     @ColumnInfo(name = "origen")
     val origen: String = "",
+    /** For an alumno: the id of their assigned educador (another row in this same table). Null until assigned,
+     * and always null for every other role — an educador, directivo or usuario has no "own teacher". */
+    @ColumnInfo(name = "educador_id")
+    val educadorId: Long? = null,
+    /** Shown on the ranking instead of the real name — chosen by the person, null until they set one. */
+    @ColumnInfo(name = "apodo")
+    val apodo: String? = null,
+    /**
+     * Does NOT block logging in or using the app — "por default se les dejará ingresar". It only flags
+     * the account for whoever in the chain above them (administrador > directivo > educador > alumno, or
+     * administrador > usuario) to review in Gestión. New self-registered accounts start false; a demo
+     * account or an account that already existed before this column was added starts true.
+     */
+    @ColumnInfo(name = "validado")
+    val validado: Boolean = false,
+    /** En Clasificación, por default se muestra el nombre; esto deja mostrar el apodo en su lugar. */
+    @ColumnInfo(name = "usar_apodo_ranking")
+    val usarApodoRanking: Boolean = false,
+    /** Epoch millis. Nula en cuentas de antes de este campo. Es lo único que dice si la cuenta es de un menor. */
+    @ColumnInfo(name = "fecha_nacimiento")
+    val fechaNacimiento: Long? = null,
 )
 
 @Entity(
@@ -104,6 +126,39 @@ interface UsuarioDao {
     @Query("SELECT * FROM usuarios WHERE id = :id LIMIT 1")
     suspend fun findById(id: Long): UsuarioEntity?
 
+    /** For an educador: the alumnos assigned to them, nobody else's. */
+    @Query("SELECT * FROM usuarios WHERE educador_id = :educadorId ORDER BY nombre_completo")
+    fun observeAlumnosDeEducador(educadorId: Long): Flow<List<UsuarioEntity>>
+
+    /** For a directivo: everyone in their institution, every role. An educador's panel narrows this itself. */
+    @Query("SELECT * FROM usuarios WHERE origen = :origen COLLATE NOCASE ORDER BY rol, nombre_completo")
+    fun observeUsuariosDeInstitucion(origen: String): Flow<List<UsuarioEntity>>
+
+    /** For an administrador: literally everyone — every institution and every independent usuario. */
+    @Query("SELECT * FROM usuarios ORDER BY origen, rol, nombre_completo")
+    fun observeTodos(): Flow<List<UsuarioEntity>>
+
+    @Query("UPDATE usuarios SET educador_id = :educadorId WHERE id = :alumnoId")
+    suspend fun asignarEducador(alumnoId: Long, educadorId: Long?)
+
+    @Query("UPDATE usuarios SET rol = :rol WHERE id = :usuarioId")
+    suspend fun cambiarRol(usuarioId: Long, rol: String)
+
+    @Query("UPDATE usuarios SET apodo = :apodo WHERE id = :usuarioId")
+    suspend fun actualizarApodo(usuarioId: Long, apodo: String?)
+
+    @Query("UPDATE usuarios SET nombre_completo = :nombre WHERE id = :usuarioId")
+    suspend fun actualizarNombre(usuarioId: Long, nombre: String)
+
+    @Query("UPDATE usuarios SET contrasena_hash = :hash WHERE id = :usuarioId")
+    suspend fun actualizarContrasena(usuarioId: Long, hash: String)
+
+    @Query("UPDATE usuarios SET validado = 1 WHERE id = :usuarioId")
+    suspend fun validar(usuarioId: Long)
+
+    @Query("UPDATE usuarios SET usar_apodo_ranking = :usar WHERE id = :usuarioId")
+    suspend fun actualizarUsarApodoRanking(usuarioId: Long, usar: Boolean)
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(usuario: UsuarioEntity): Long
 }
@@ -133,4 +188,57 @@ interface PermisosModuloDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(permisos: List<PermisosModuloEntity>)
+}
+
+/**
+ * A problem reported with the app or with someone from the institution (alumno), or with no institution
+ * at all (usuario independiente). [destinoOrigen] is where it should be read: an institution's name, or
+ * null when the reporter has none — then it goes straight to the administradores instead of being lost,
+ * per [com.cecapi.app.feature.modulo1_aplicacionprincipal.RolePermissions.destinoDeIncidencia].
+ */
+@Entity(
+    tableName = "incidencias",
+    foreignKeys = [
+        ForeignKey(
+            entity = UsuarioEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["reportante_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("reportante_id"), Index("destino_origen")],
+)
+data class IncidenciaEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    @ColumnInfo(name = "reportante_id")
+    val reportanteId: Long,
+    @ColumnInfo(name = "destino_origen")
+    val destinoOrigen: String?,
+    @ColumnInfo(name = "mensaje")
+    val mensaje: String,
+    @ColumnInfo(name = "fecha_reporte")
+    val fechaReporte: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "resuelta")
+    val resuelta: Boolean = false,
+)
+
+@Dao
+interface IncidenciaDao {
+    @Insert
+    suspend fun insert(incidencia: IncidenciaEntity): Long
+
+    @Query("SELECT * FROM incidencias WHERE reportante_id = :usuarioId ORDER BY fecha_reporte DESC")
+    fun observeDeReportante(usuarioId: Long): Flow<List<IncidenciaEntity>>
+
+    /** For a directivo/educador's institution. */
+    @Query("SELECT * FROM incidencias WHERE destino_origen = :origen COLLATE NOCASE ORDER BY fecha_reporte DESC")
+    fun observeDeInstitucion(origen: String): Flow<List<IncidenciaEntity>>
+
+    /** For an administrador: everyone's — both the institutions' and the independent usuarios' with no origen. */
+    @Query("SELECT * FROM incidencias ORDER BY fecha_reporte DESC")
+    fun observeTodas(): Flow<List<IncidenciaEntity>>
+
+    @Query("UPDATE incidencias SET resuelta = 1 WHERE id = :id")
+    suspend fun marcarResuelta(id: Long)
 }

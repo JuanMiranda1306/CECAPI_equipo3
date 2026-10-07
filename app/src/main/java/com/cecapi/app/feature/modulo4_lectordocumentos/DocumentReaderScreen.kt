@@ -3,6 +3,7 @@ package com.cecapi.app.feature.modulo4_lectordocumentos
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.ImageCapture
 import androidx.compose.foundation.border
@@ -24,7 +25,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.SkipNext
@@ -39,6 +43,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,7 +71,11 @@ import com.cecapi.app.core.theme.ModuleLearningAccent
 import com.cecapi.app.core.ui.CameraViewfinder
 import com.cecapi.app.core.ui.CaptureButton
 import com.cecapi.app.core.ui.FramingGuide
+import com.cecapi.app.core.ui.TopAction
 import com.cecapi.app.core.ui.capturePhoto
+import com.cecapi.app.core.ui.copyPickedImage
+import com.cecapi.app.core.voice.VoiceState
+import kotlinx.coroutines.launch
 
 @Composable
 fun DocumentReaderScreen(
@@ -76,6 +85,7 @@ fun DocumentReaderScreen(
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
+    val voiceState by viewModel.voiceState.collectAsState()
     val isPreview = LocalInspectionMode.current
 
     var hasCameraPermission by remember {
@@ -114,6 +124,24 @@ fun DocumentReaderScreen(
     LaunchedEffect(Unit) { viewModel.back.collect { onBack() } }
     LaunchedEffect(Unit) { viewModel.routes.collect(onOpen) }
 
+    // The system picture picker: the person chooses one picture and the app sees only that one.
+    val coroutineScope = rememberCoroutineScope()
+    val pickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) {
+            viewModel.onPickCancelled()
+        } else {
+            coroutineScope.launch {
+                val copy = copyPickedImage(context, uri, "cecapi_docs")
+                if (copy == null) viewModel.onPickFailed() else viewModel.onPhotoCaptured(copy.first, copy.second)
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.pickRequests.collect {
+            pickLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        }
+    }
+
     val hayDocumento = uiState.parrafos.isNotEmpty()
     // Todos los botones piden dos toques: el primero dice qué hacen, el segundo ejecutan la acción.
     val onVolverClick: () -> Unit = { viewModel.onBotonPresionado(BotonLector.VOLVER) }
@@ -139,6 +167,9 @@ fun DocumentReaderScreen(
             onBack = onVolverClick,
             onCaptureClick = { if (viewModel.onBotonCapturaPresionado()) takePhoto() },
             onFramingHint = viewModel::onFramingHint,
+            listening = voiceState is VoiceState.Listening,
+            onGallery = viewModel::pedirGaleria,
+            onMic = viewModel::onMicTapped,
         )
     }
 }
@@ -154,6 +185,9 @@ private fun DocumentCameraScreen(
     onBack: () -> Unit,
     onCaptureClick: () -> Unit,
     onFramingHint: (FramingHint) -> Unit = {},
+    listening: Boolean = false,
+    onGallery: () -> Unit = {},
+    onMic: () -> Unit = {},
 ) {
     // Analiza la vista previa para guiar por voz hacia dónde mover el teléfono; se apaga al salir de la cámara.
     val framingAnalyzer = remember { TextFramingAnalyzer(onFramingHint) }
@@ -185,14 +219,34 @@ private fun DocumentCameraScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            CaptureButton(
-                processing = uiState.isProcessing,
-                enabled = !uiState.isProcessing,
-                help = "Botón de captura. Tócalo para tomar la foto del documento o di toma la foto.",
-                onClick = onCaptureClick,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-                size = 136.dp,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TopAction(
+                    icon = Icons.Filled.PhotoLibrary,
+                    label = "Mis fotos",
+                    help = "Mis fotos. Abre el selector de fotos de tu teléfono para que elijas una imagen que ya tienes. " +
+                        "La aplicación solo ve la foto que tú elijas. También puedes decir: elige una foto.",
+                    onClick = onGallery,
+                )
+                CaptureButton(
+                    processing = uiState.isProcessing,
+                    enabled = !uiState.isProcessing,
+                    help = "Botón de captura. Tócalo para tomar la foto del documento o di toma la foto.",
+                    onClick = onCaptureClick,
+                    size = 136.dp,
+                )
+                // Mismo ancho que "Mis fotos" para que el obturador quede centrado; muestra si ya está escuchando.
+                TopAction(
+                    icon = if (listening) Icons.Filled.MicOff else Icons.Filled.Mic,
+                    label = if (listening) "Escuchando" else "Hablar",
+                    help = "Micrófono. Tócalo para hablar: di toma la foto, o elige una foto.",
+                    tint = if (listening) CecapiAccent else CecapiTextPrimary,
+                    onClick = onMic,
+                )
+            }
         }
     }
 }

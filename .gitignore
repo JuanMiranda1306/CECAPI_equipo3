@@ -14,3 +14,11 @@ captures/
 
 # Logs
 *.log
+ 
+# Backend 
+.env 
+entorno_virtual/ 
+__pycache__/ 
+*.pyc 
+backend/uso_diario.json
+backend/uso_diario.tmp

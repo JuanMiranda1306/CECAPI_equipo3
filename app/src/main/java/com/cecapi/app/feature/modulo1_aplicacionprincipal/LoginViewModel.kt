@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.cecapi.app.core.voice.FeedbackCues
 import com.cecapi.app.core.voice.VoiceEngine
 import com.cecapi.app.core.voice.VoiceMessages
+import com.cecapi.app.core.voice.VoiceState
 import com.cecapi.app.core.voice.VoiceText
 import com.cecapi.app.core.voice.WakeWordController
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -13,8 +14,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -46,11 +49,18 @@ class LoginViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
 
+    val voiceState: StateFlow<VoiceState> = voiceEngine.state.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5_000), VoiceState.Idle,
+    )
+
     private val _loginSucceeded = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val loginSucceeded: SharedFlow<Unit> = _loginSucceeded
 
     private val _navigateToRegister = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val navigateToRegister: SharedFlow<Unit> = _navigateToRegister
+
+    private val _back = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val back: SharedFlow<Unit> = _back
 
     private var step = LoginVoiceStep.COMMAND
         set(value) {
@@ -116,20 +126,33 @@ class LoginViewModel @Inject constructor(
 
     private fun captureUsername(text: String) {
         step = LoginVoiceStep.COMMAND
-        if (VoiceText.normalize(text) in CANCEL_WORDS) {
-            voiceEngine.speak("De acuerdo. Di usuario, contraseña o ingresar.", listenAfter = true)
-            return
-        }
+        if (wantsToLeaveWhileCapturing(text)) return
         applyUsername(text)
     }
 
     private fun capturePassword(text: String) {
         step = LoginVoiceStep.COMMAND
-        if (VoiceText.normalize(text) in CANCEL_WORDS) {
-            voiceEngine.speak("De acuerdo. Di usuario, contraseña o ingresar.", listenAfter = true)
-            return
-        }
+        if (wantsToLeaveWhileCapturing(text)) return
         applyPasswordAndSubmit(text)
+    }
+
+    /**
+     * While dictating the username or password, "regresar"/"salir" must leave the login screen like
+     * they do everywhere else — not get typed in as if they were the username or password. A softer
+     * "cancelar"/"no" just cancels this one field and stays, asking again.
+     */
+    private fun wantsToLeaveWhileCapturing(text: String): Boolean {
+        val words = VoiceText.normalize(text)
+        if (VoiceText.hasAny(words, EXIT_PHRASES)) {
+            voiceEngine.speak("Volviendo al inicio.")
+            _back.tryEmit(Unit)
+            return true
+        }
+        if (words in CANCEL_WORDS) {
+            voiceEngine.speak("De acuerdo. Di usuario, contraseña o ingresar.", listenAfter = true)
+            return true
+        }
+        return false
     }
 
     /** Usernames are stored in UPPERCASE without spaces, so a spoken one matches however it was heard. */
@@ -206,6 +229,18 @@ class LoginViewModel @Inject constructor(
         val words = VoiceText.normalize(text)
         val fields = parseFields(text)
         when {
+            // Before the field parser: "olvidé mi contraseña" ends in the word "contraseña" with nothing
+            // after it, which the parser would otherwise read as "start dictating the password" — and then
+            // whatever the person said next would be tried as the password itself and fail.
+            VoiceText.hasAny(words, FORGOT_PASSWORD_PHRASES) -> voiceEngine.speak(
+                "Todavía no hay una forma automática de recuperar tu contraseña. Pide a un administrador o " +
+                    "a quien te dio de alta que te ayude a restablecerla.",
+                listenAfter = true,
+            )
+            VoiceText.hasAny(words, EXIT_PHRASES) -> {
+                voiceEngine.speak("Volviendo al inicio.")
+                _back.tryEmit(Unit)
+            }
             wantsRegister(words) -> {
                 voiceEngine.speak("Vamos a crear tu cuenta.")
                 _navigateToRegister.tryEmit(Unit)
@@ -258,6 +293,17 @@ class LoginViewModel @Inject constructor(
         voiceEngine.speak(VoiceMessages.MIC_DENIED)
     }
 
+    /** Two quick taps on the mic silence the assistant, for someone using touch instead of voice. */
+    fun onMicDoubleTap() = voiceEngine.mute()
+
+    fun onCommandsRequested() {
+        voiceEngine.speak(
+            "Di usuario para dictar tu usuario, o contraseña para dictar tu contraseña, o escríbelos abajo. " +
+                "Di ingresar cuando tengas los dos.",
+            listenAfter = true,
+        )
+    }
+
     fun submit() {
         val state = _uiState.value
         if (state.isSubmitting) return
@@ -294,7 +340,7 @@ class LoginViewModel @Inject constructor(
                 voiceEngine.speak("Ocurrió un problema al verificar tus datos. Intenta de nuevo en unos segundos.")
                 return@launch
             }
-            Log.d(TAG, "login attempt user=$username success=${result is LoginResult.Success}")
+            Log.d(TAG, "login attempt success=${result is LoginResult.Success}")
             when (result) {
                 is LoginResult.Success -> {
                     attemptsStore.reset()
@@ -383,5 +429,10 @@ class LoginViewModel @Inject constructor(
         val FILLER_PREFIX = Regex("^\\s*(?:(?:es|son|sera|seria|va a ser|de|el|la|mi|tu)\\s+)*")
         val SUBMIT_WORDS = listOf("ingresa", "ingresar", "entrar", "entra", "iniciar", "inicia", "listo", "aceptar", "enviar")
         val CANCEL_WORDS = setOf("cancelar", "cancela", "atras", "no", "borrar")
+        val FORGOT_PASSWORD_PHRASES = listOf(
+            "olvide mi contrasena", "olvide la contrasena", "se me olvido la contrasena", "se me olvido mi contrasena",
+            "no recuerdo mi contrasena", "no me acuerdo de mi contrasena", "perdi mi contrasena",
+        )
+        val EXIT_PHRASES = listOf("atras", "volver", "vuelve", "regresa", "regresar", "salir", "menu", "inicio")
     }
 }
