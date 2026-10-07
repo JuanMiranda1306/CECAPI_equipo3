@@ -45,7 +45,12 @@ class DocumentReaderRepository @Inject constructor(
 
             val inputImage = InputImage.fromFilePath(context, imageUri)
             val visionText = recognizer.process(inputImage).await()
-            val parrafos = visionText.textBlocks.map { it.text.trim() }.filter { it.isNotBlank() }
+            val bloques = visionText.textBlocks.mapNotNull { bloque ->
+                bloque.boundingBox?.let { caja ->
+                    BloqueTexto(bloque.text, caja.left, caja.top, caja.right, caja.bottom)
+                }
+            }
+            val parrafos = prepararParrafos(bloques)
 
             if (parrafos.isEmpty()) {
                 return OcrOutcome.SinTexto
