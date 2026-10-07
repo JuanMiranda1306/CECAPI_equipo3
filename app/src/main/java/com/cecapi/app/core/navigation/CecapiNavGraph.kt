@@ -8,10 +8,15 @@ import androidx.navigation.compose.rememberNavController
 import com.cecapi.app.core.ui.WakeScope
 import com.cecapi.app.feature.modulo1_aplicacionprincipal.CameraHubScreen
 import com.cecapi.app.feature.modulo1_aplicacionprincipal.DashboardScreen
+import com.cecapi.app.feature.modulo1_aplicacionprincipal.EditAccountScreen
 import com.cecapi.app.feature.modulo1_aplicacionprincipal.HomeScreen
 import com.cecapi.app.feature.modulo1_aplicacionprincipal.LoginScreen
+import com.cecapi.app.feature.modulo1_aplicacionprincipal.ChatsScreen
+import com.cecapi.app.feature.modulo1_aplicacionprincipal.GestionScreen
 import com.cecapi.app.feature.modulo1_aplicacionprincipal.PersonalizationScreen
+import com.cecapi.app.feature.modulo1_aplicacionprincipal.RankingScreen
 import com.cecapi.app.feature.modulo1_aplicacionprincipal.RegisterScreen
+import com.cecapi.app.feature.modulo1_aplicacionprincipal.SoporteScreen
 import com.cecapi.app.feature.modulo1_aplicacionprincipal.SettingsScreen
 import com.cecapi.app.feature.modulo2_asistentevoz.VoiceAssistantScreen
 import com.cecapi.app.feature.modulo3_asistenteinteligente.AiAssistantScreen
@@ -26,6 +31,7 @@ fun CecapiNavGraph(navController: NavHostController = rememberNavController()) {
         composable(CecapiDestinations.HOME) {
             HomeScreen(
                 onNavigateToLogin = { navController.navigate(CecapiDestinations.LOGIN) },
+                onNavigateToRegister = { navController.navigate(CecapiDestinations.REGISTER) },
                 onNavigateToModule = { route -> navController.navigate(route) },
                 onNavigateToSettings = { navController.navigate(CecapiDestinations.SETTINGS) },
             )
@@ -38,16 +44,20 @@ fun CecapiNavGraph(navController: NavHostController = rememberNavController()) {
                     }
                 },
                 onNavigateToRegister = { navController.navigate(CecapiDestinations.REGISTER) },
+                onBack = { navController.popBackStack() },
             )
         }
         composable(CecapiDestinations.REGISTER) {
-            RegisterScreen(
-                onRegisterSuccess = {
-                    navController.navigate(CecapiDestinations.DASHBOARD) {
-                        popUpTo(CecapiDestinations.HOME) { inclusive = true }
-                    }
-                },
-            )
+            WakeScope {
+                RegisterScreen(
+                    onRegisterSuccess = {
+                        navController.navigate(CecapiDestinations.DASHBOARD) {
+                            popUpTo(CecapiDestinations.HOME) { inclusive = true }
+                        }
+                    },
+                    onBack = { navController.popBackStack() },
+                )
+            }
         }
         composable(CecapiDestinations.DASHBOARD) {
             DashboardScreen(
@@ -74,6 +84,26 @@ fun CecapiNavGraph(navController: NavHostController = rememberNavController()) {
         composable(CecapiDestinations.PERSONALIZATION) {
             WakeScope { PersonalizationScreen(onBack = { navController.popBackStack() }) }
         }
+        composable(CecapiDestinations.GESTION) {
+            WakeScope { GestionScreen(onBack = { navController.popBackStack() }) }
+        }
+        composable(CecapiDestinations.SOPORTE) {
+            WakeScope { SoporteScreen(onBack = { navController.popBackStack() }) }
+        }
+        composable(CecapiDestinations.RANKING) {
+            WakeScope { RankingScreen(onBack = { navController.popBackStack() }) }
+        }
+        composable(CecapiDestinations.EDIT_ACCOUNT) {
+            WakeScope { EditAccountScreen(onBack = { navController.popBackStack() }) }
+        }
+        composable(CecapiDestinations.CHATS) {
+            WakeScope {
+                ChatsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpen = { route -> navController.navigate(route) },
+                )
+            }
+        }
         composable(CecapiDestinations.CAMERA_HUB) {
             WakeScope {
                 CameraHubScreen(
@@ -83,10 +113,15 @@ fun CecapiNavGraph(navController: NavHostController = rememberNavController()) {
             }
         }
         composable(CecapiDestinations.VOICE_ASSISTANT) {
-            WakeScope { VoiceAssistantScreen(onNavigateToModule = { route -> navController.navigate(route) }) }
+            WakeScope {
+                VoiceAssistantScreen(
+                    onBack = { navController.popBackStack() },
+                    onNavigateToModule = { route -> navController.navigate(route) },
+                )
+            }
         }
         composable(CecapiDestinations.AI_ASSISTANT) {
-            WakeScope { AiAssistantScreen() }
+            WakeScope { AiAssistantScreen(onBack = { navController.popBackStack() }) }
         }
         composable(CecapiDestinations.DOCUMENT_READER) {
             WakeScope {
@@ -103,7 +138,7 @@ fun CecapiNavGraph(navController: NavHostController = rememberNavController()) {
             WakeScope { RequestsScreen(onBack = { navController.popBackStack() }) }
         }
         composable(CecapiDestinations.LEARNING) {
-            WakeScope { LearningScreen() }
+            WakeScope { LearningScreen(onBack = { navController.popBackStack() }) }
         }
         composable(CecapiDestinations.ENVIRONMENT) {
             WakeScope {

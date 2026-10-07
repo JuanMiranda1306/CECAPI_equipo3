@@ -7,6 +7,7 @@ import com.cecapi.app.core.voice.FeedbackCues
 import com.cecapi.app.core.voice.VoiceEngine
 import com.cecapi.app.core.voice.VoiceMessages
 import com.cecapi.app.core.voice.VoiceState
+import com.cecapi.app.core.voice.VoiceText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -21,10 +22,19 @@ import javax.inject.Inject
 
 private enum class RegisterVoiceTarget { NOMBRE_COMPLETO, USUARIO, CONTRASENA, NONE }
 
+/** Por ahora solo hay una institución real; el resto entra como independiente. */
+enum class InstitucionRegistro(val origen: String, val etiqueta: String) {
+    NINGUNA("", "No estoy afiliado con ninguna"),
+    CECAPI("CECAPI", "CECAPI"),
+}
+
 data class RegisterUiState(
     val nombreCompleto: String = "",
     val nombreUsuario: String = "",
     val contrasena: String = "",
+    val institucion: InstitucionRegistro = InstitucionRegistro.NINGUNA,
+    /** Epoch millis; null hasta que la persona elige una fecha. */
+    val fechaNacimiento: Long? = null,
     val errorMessage: String? = null,
     val isSubmitting: Boolean = false,
 )
@@ -46,16 +56,38 @@ class RegisterViewModel @Inject constructor(
     private val _registerSucceeded = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val registerSucceeded: SharedFlow<Unit> = _registerSucceeded
 
+    private val _back = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val back: SharedFlow<Unit> = _back
+
     private var voiceTarget = RegisterVoiceTarget.NOMBRE_COMPLETO
 
     init {
-        voiceEngine.speak("Vamos a crear tu cuenta. Di tu nombre completo, o escríbelo abajo.")
+        // What is said here is a name or a password, so the global commands must not take it. Whole-phrase
+        // controls (cancelar, repite, lista de comandos) are handled below.
+        voiceEngine.rawInput = true
+        voiceEngine.speak(
+            "Vamos a crear tu cuenta. Di tu nombre completo, o escríbelo abajo. Di cancelar para volver. " +
+                CommandCatalog.hint("crear cuenta"),
+        )
         viewModelScope.launch {
             voiceEngine.recognizedSpeech.collect { speech -> onVoiceInput(speech.text.trim()) }
         }
     }
 
     private fun onVoiceInput(texto: String) {
+        val phrase = VoiceText.normalize(texto)
+        if (phrase in CANCEL_PHRASES) {
+            _back.tryEmit(Unit)
+            return
+        }
+        if (CommandCatalog.isRequest(phrase)) {
+            voiceEngine.speak(CommandCatalog.REGISTER, listenAfter = true)
+            return
+        }
+        if (phrase in REPEAT_PHRASES) {
+            repeatPrompt()
+            return
+        }
         when (voiceTarget) {
             RegisterVoiceTarget.NOMBRE_COMPLETO -> {
                 onNombreCompletoChange(texto)
@@ -78,12 +110,38 @@ class RegisterViewModel @Inject constructor(
         }
     }
 
+    /** Two quick taps on the mic silence the assistant, for someone using touch with their hands instead of voice. */
+    fun onMicDoubleTap() = voiceEngine.mute()
+
     fun onMicTapped() {
         voiceEngine.startListening()
     }
 
     fun onMicPermissionDenied() {
         voiceEngine.speak(VoiceMessages.MIC_DENIED)
+    }
+
+    private fun repeatPrompt() {
+        voiceEngine.speak(
+            when (voiceTarget) {
+                RegisterVoiceTarget.NOMBRE_COMPLETO -> "Di tu nombre completo."
+                RegisterVoiceTarget.USUARIO -> "Di el nombre de usuario que quieres usar."
+                RegisterVoiceTarget.CONTRASENA -> "Di tu contraseña."
+                RegisterVoiceTarget.NONE -> "Ya tengo tus datos. Si algo está mal, corrígelo escribiendo en la pantalla."
+            },
+            listenAfter = voiceTarget != RegisterVoiceTarget.NONE,
+        )
+    }
+
+    override fun onCleared() {
+        voiceEngine.rawInput = false
+        super.onCleared()
+    }
+
+    private companion object {
+        // Whole phrases only: a person's name or password could contain these words.
+        val CANCEL_PHRASES = setOf("cancelar", "cancela", "volver", "vuelve", "atras", "regresar", "regresa", "salir")
+        val REPEAT_PHRASES = setOf("repite", "repetir", "otra vez", "de nuevo", "repite la pregunta", "ayuda")
     }
 
     fun onNombreCompletoChange(value: String) {
@@ -96,6 +154,14 @@ class RegisterViewModel @Inject constructor(
 
     fun onContrasenaChange(value: String) {
         _uiState.value = _uiState.value.copy(contrasena = value, errorMessage = null)
+    }
+
+    fun onInstitucionChange(value: InstitucionRegistro) {
+        _uiState.value = _uiState.value.copy(institucion = value)
+    }
+
+    fun onFechaNacimientoChange(epochMillis: Long) {
+        _uiState.value = _uiState.value.copy(fechaNacimiento = epochMillis, errorMessage = null)
     }
 
     fun submit() {
@@ -113,6 +179,12 @@ class RegisterViewModel @Inject constructor(
             voiceEngine.speak(message, listenAfter = true)
             return
         }
+        if (state.fechaNacimiento == null) {
+            val message = "Falta tu fecha de nacimiento."
+            _uiState.value = state.copy(errorMessage = message)
+            voiceEngine.speak(message)
+            return
+        }
 
         _uiState.value = state.copy(isSubmitting = true, errorMessage = null)
         viewModelScope.launch {
@@ -121,6 +193,8 @@ class RegisterViewModel @Inject constructor(
                     nombreUsuario = state.nombreUsuario,
                     contrasena = state.contrasena,
                     nombreCompleto = state.nombreCompleto,
+                    origen = state.institucion.origen,
+                    fechaNacimiento = state.fechaNacimiento,
                 )
             } catch (e: CancellationException) {
                 throw e

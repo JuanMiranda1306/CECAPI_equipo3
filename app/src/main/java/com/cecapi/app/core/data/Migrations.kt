@@ -13,3 +13,96 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         db.execSQL("UPDATE usuarios SET rol = 'administrador', origen = 'admin' WHERE nombre_usuario = 'CECAPI'")
     }
 }
+
+/**
+ * v3: the audio exercises of Módulo 6 now carry a sound file and the volume of each ear, and the vibration
+ * exercises get their own tables. The old voice-command exercises are dropped (their results go with them,
+ * by cascade); the new bank is created the first time Actividades opens.
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("DELETE FROM resultados_ejercicios")
+        db.execSQL("DELETE FROM ejercicios")
+        db.execSQL("ALTER TABLE ejercicios ADD COLUMN archivo_sonido TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE ejercicios ADD COLUMN vol_izq_inicio REAL NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE ejercicios ADD COLUMN vol_der_inicio REAL NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE ejercicios ADD COLUMN vol_izq_fin REAL NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE ejercicios ADD COLUMN vol_der_fin REAL NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE ejercicios ADD COLUMN duracion_ms INTEGER NOT NULL DEFAULT 1500")
+
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS ejercicios_vibracion (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "titulo TEXT NOT NULL, instruccion TEXT NOT NULL, respuesta_correcta TEXT NOT NULL, " +
+                "nivel INTEGER NOT NULL, patron_ms TEXT NOT NULL, intensidad INTEGER NOT NULL)",
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS resultados_vibracion (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "usuario_id INTEGER NOT NULL, ejercicio_vibracion_id INTEGER NOT NULL, " +
+                "fue_correcto INTEGER NOT NULL, fecha_realizado INTEGER NOT NULL, " +
+                "FOREIGN KEY(usuario_id) REFERENCES usuarios(id) ON UPDATE NO ACTION ON DELETE CASCADE, " +
+                "FOREIGN KEY(ejercicio_vibracion_id) REFERENCES ejercicios_vibracion(id) ON UPDATE NO ACTION ON DELETE CASCADE)",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_resultados_vibracion_usuario_id ON resultados_vibracion (usuario_id)")
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_resultados_vibracion_ejercicio_vibracion_id " +
+                "ON resultados_vibracion (ejercicio_vibracion_id)",
+        )
+    }
+}
+
+/** v4: roles get educador, and an alumno can be linked to the educador who teaches them. */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE usuarios ADD COLUMN educador_id INTEGER")
+    }
+}
+
+/** v5: a simple way for an alumno or an independent usuario to report a problem. */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS incidencias (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "reportante_id INTEGER NOT NULL, destino_origen TEXT, mensaje TEXT NOT NULL, " +
+                "fecha_reporte INTEGER NOT NULL, resuelta INTEGER NOT NULL DEFAULT 0, " +
+                "FOREIGN KEY(reportante_id) REFERENCES usuarios(id) ON UPDATE NO ACTION ON DELETE CASCADE)",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_incidencias_reportante_id ON incidencias (reportante_id)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_incidencias_destino_origen ON incidencias (destino_origen)")
+    }
+}
+
+/** v6: an optional nickname, shown on the ranking instead of the real name (there are minors). */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE usuarios ADD COLUMN apodo TEXT")
+    }
+}
+
+/**
+ * v7: who in the chain above an account (administrador > directivo > educador > alumno, or
+ * administrador > usuario) still needs to review it. Defaults new column to true so every account that
+ * already existed before this migration is not retroactively flagged pending; only accounts created from
+ * here on default to false (SessionRepository.register sets it explicitly either way).
+ */
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE usuarios ADD COLUMN validado INTEGER NOT NULL DEFAULT 1")
+    }
+}
+
+/** v8: en Clasificación, por default se muestra el nombre; la persona puede elegir mostrar su apodo. */
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE usuarios ADD COLUMN usar_apodo_ranking INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+/** v9: fecha de nacimiento, para saber si la cuenta es de un menor de edad. Nula en cuentas que ya existían. */
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE usuarios ADD COLUMN fecha_nacimiento INTEGER")
+    }
+}

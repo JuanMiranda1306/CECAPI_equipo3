@@ -8,6 +8,7 @@ object CecapiDestinations {
     const val DASHBOARD = "dashboard"
     const val SETTINGS = "settings"
     const val PERSONALIZATION = "personalization"
+    const val CHATS = "chats"
 
     /** The "Cámara" card: one entry that leads to reading text or describing what is in front. */
     const val CAMERA_HUB = "camera_hub"
@@ -18,4 +19,16 @@ object CecapiDestinations {
     const val REQUESTS = "requests"
     const val LEARNING = "learning"
     const val ENVIRONMENT = "environment"
+
+    /** Only for administrador, directivo and educador — never shown or reachable for alumno/usuario. */
+    const val GESTION = "gestion"
+
+    /** Only for alumno and usuario — the opposite of GESTION: see their educador, report a problem. */
+    const val SOPORTE = "soporte"
+
+    /** Individual and institution standings in Actividades. Open to anyone signed in, every role. */
+    const val RANKING = "ranking"
+
+    /** Each person's own: name, apodo, whether Clasificación shows one or the other, and password. */
+    const val EDIT_ACCOUNT = "edit_account"
 }
